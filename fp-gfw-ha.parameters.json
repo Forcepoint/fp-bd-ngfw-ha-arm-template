@@ -1,0 +1,102 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "location": {
+            "value": ""
+        },
+        "engineUsername": {
+            "value": ""
+        },
+        "sshKey": {
+            "value": ""
+        },
+        "vnet": {
+            "value": {
+                "name": "",
+                "resourceGroup": "",
+                "addressPrefixes": [
+                    "10.1.0.0/16"
+                ],
+                "addressPrefix": "10.1.0.0/16",
+                "newOrExisting": "new",
+                "subnets": {
+                    "security": {
+                        "name": "subnet-0-security",
+                        "addressPrefix": "10.1.0.0/24",
+                        "startAddress": "10.1.0.4",
+                        "vm1PrivateAddress": "10.1.0.5",
+                        "vm2PrivateAddress": "10.1.0.6"
+                    },
+                    "front": {
+                        "name": "subnet-1-front",
+                        "addressPrefix": "10.1.1.0/24",
+                        "startAddress": "10.1.1.4"
+                    },
+                    "back": {
+                        "name": "subnet-2-back",
+                        "addressPrefix": "10.1.2.0/24",
+                        "startAddress": "10.1.2.4"
+                    }
+                }
+            }
+        },
+        "sku": {
+            "value": "ngfw_payg"
+        },
+        "imageVersion": {
+            "value": "6.7.2"
+        },
+        "engineVMSize": {
+            "value": "Standard_D2_v3"
+        },
+        "resourcePrefix": {
+            "value": "fp-ngfw-"
+        },
+        "smcContactAddress": {
+            "value": ""
+        },
+        "smcContactPort": {
+            "value": 8082
+        },
+        "smcContactApikey": {
+            "value": ""
+        },
+        "smcContactCheckCertificate": {
+            "value": true
+        },
+        "smcCertificate": {
+            "value": ""
+        },
+        "policyName": {
+            "value": ""
+        },
+        "autoDelete": {
+            "value": true
+        },
+        "engineLocation": {
+            "value": ""
+        },
+        "logServerPool": {
+            "value": [
+                ""
+            ]
+        },
+        "useZones": {
+            "value": true
+        },
+        "deployment_model": {
+            "value": "self-created"
+        },
+        "zone1": {
+            "value": [
+                "1"
+            ]
+        },
+        "zone2": {
+            "value": [
+                "2"
+            ]
+        }
+    }
+}

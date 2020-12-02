@@ -1,0 +1,929 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "outputs": {
+        "NGFWenginesName": {
+            "type": "string",
+            "value": "[concat('NGFW Engine 1: ', variables('ngfwVmName'), 'NGFW Engine 2: ', variables('ngfwVm2Name'))]"
+        },
+        "backEndSubnetReferenceId": {
+            "type": "string",
+            "value": "[resourceId('Microsoft.Network/virtualnetworks/subnets',parameters('vnet').name, parameters('vnet').subnets.back.name)]"
+        },
+        "frontEndSubnetReferenceId": {
+            "type": "string",
+            "value": "[resourceId('Microsoft.Network/virtualnetworks/subnets',parameters('vnet').name, parameters('vnet').subnets.front.name)]"
+        },
+        "hostFQDN": {
+            "type": "string",
+            "value": "[reference(variables('publicIpName')).dnsSettings.fqdn]"
+        }
+    },
+    "variables": {
+        "external-loadbalancer-name": "[concat(parameters('resourcePrefix'),'externallb')]",
+        "internal-loadbalancer-name": "[concat(parameters('resourcePrefix'),'internallb')]",
+        "CustomData": {
+            "auto-delete": "[parameters('autoDelete')]",
+            "location": "[parameters('engineLocation')]",
+            "log-server-pool": "[parameters('logServerPool')]",
+            "policy-name": "[parameters('policyName')]",
+            "probe-enabled": true,
+            "probe-port": 16001,
+            "smc-contact": {
+                "address": "[parameters('smcContactAddress')]",
+                "apikey": "[parameters('smcContactApikey')]",
+                "certificate": "[parameters('smcCertificate')]",
+                "check_certificate": "[parameters('smcContactCheckCertificate')]",
+                "port": "[parameters('smcContactPort')]",
+                "tls": "[parameters('smcContactTls')]"
+            },
+            "type": "single-firewall",
+            "verbose": false
+        },
+        "domainNameLabel": "[concat(parameters('resourcePrefix'), variables('instanceKey'))]",
+        "vmDomainNameLabel": "[concat(parameters('resourcePrefix'), variables('instanceKey'), '-engine1')]",
+        "vm2DomainNameLabel": "[concat(parameters('resourcePrefix'), variables('instanceKey'), '-engine2')]",
+        "instanceKey": "[uniqueString(resourceGroup().id, deployment().name)]",
+        "publicIpName": "[concat(parameters('resourcePrefix'),'pubip')]",
+        "vmPublicIpName": "[concat(parameters('resourcePrefix'),'engine1-pubip')]",
+        "vm2PublicIpName": "[concat(parameters('resourcePrefix'),'engine2-pubip')]",
+        "storageName": "[concat(variables('instanceKey'),'fpdiag')]",
+        "ngfwVmName": "[concat(parameters('resourcePrefix'),'forcepoint-ngfw-engine1')]",
+        "ngfwVm2Name": "[concat(parameters('resourcePrefix'),'forcepoint-ngfw-engine2')]",
+        "vm1NetwrokInterfaceName": "[concat(parameters('resourcePrefix'),'engine1')]",
+        "vm2NetwrokInterfaceName": "[concat(parameters('resourcePrefix'),'engine2')]",
+        "availabilitySetName": "[concat(parameters('resourcePrefix'),'availabilitySet')]",
+        "availabilitySetId": "[resourceId('Microsoft.Compute/availabilitySets', variables('availabilitySetName'))]",
+        "availabilitySet": {
+            "id": "[variables('availabilitySetId')]"
+        }
+    },
+    "parameters": {
+        "engineCfg": {
+            "defaultValue": "",
+            "metadata": {
+                "description": "Base64 encoded engine.cfg content from SMC"
+            },
+            "type": "string"
+        },
+        "deployment_model": {
+            "allowedValues": [
+                "self-created",
+                "manual"
+            ],
+            "metadata": {
+                "description": "NGFW deployment model"
+            },
+            "type": "string"
+        },
+        "autoDelete": {
+            "defaultValue": true,
+            "metadata": {
+                "description": "Autodelete engine in SMC during NGFW shutdown"
+            },
+            "type": "bool"
+        },
+        "engineLocation": {
+            "defaultValue": "",
+            "metadata": {
+                "description": "Name of the location in which the newly created engine must be placed. The location must already exists in SMC"
+            },
+            "type": "string"
+        },
+        "engineUsername": {
+            "metadata": {
+                "description": "NGFW engine username"
+            },
+            "type": "string"
+        },
+        "engineVMSize": {
+            "defaultValue": "Standard_D2_v3",
+            "metadata": {
+                "description": "Size of the VM used by NGFW"
+            },
+            "type": "string"
+        },
+        "imageVersion": {
+            "defaultValue": "latest",
+            "metadata": {
+                "description": "Select NGFW version to deploy"
+            },
+            "type": "string"
+        },
+        "injectToExistingVnet": {
+            "defaultValue": true,
+            "metadata": {
+                "description": "Modify existing VNET for NGFW insertion"
+            },
+            "type": "bool"
+        },
+        "location": {
+            "metadata": {
+                "description": "Location of resources going to be deployed"
+            },
+            "type": "string"
+        },
+        "logServerPool": {
+            "defaultValue": [],
+            "metadata": {
+                "description": "Log server pool to use for self creation"
+            },
+            "type": "array"
+        },
+        "policyName": {
+            "defaultValue": "",
+            "metadata": {
+                "description": "SMC Policy Name to apply to engine"
+            },
+            "type": "string"
+        },
+        "resourcePrefix": {
+            "defaultValue": "fp-ngfw-ha-",
+            "metadata": {
+                "description": "resource prefix"
+            },
+            "type": "string"
+        },
+        "sku": {
+            "allowedValues": [
+                "ngfw_payg",
+                "ngfw_byol"
+            ],
+            "metadata": {
+                "description": "SKU to use (either pay as you go or bring your own licence"
+            },
+            "type": "string"
+        },
+        "smcCertificate": {
+            "defaultValue": "",
+            "metadata": {
+                "description": "SMC TLS certificate for rest API"
+            },
+            "type": "string"
+        },
+        "smcContactAddress": {
+            "metadata": {
+                "description": "SMC address (IP address or FQDN)"
+            },
+            "type": "string"
+        },
+        "smcContactApikey": {
+            "metadata": {
+                "description": "SMC API key to use for NGFW self creation"
+            },
+            "type": "securestring"
+        },
+        "smcContactCheckCertificate": {
+            "defaultValue": true,
+            "metadata": {
+                "description": "SMC TLS certificate check during creation"
+            },
+            "type": "bool"
+        },
+        "smcContactPort": {
+            "defaultValue": 8082,
+            "metadata": {
+                "description": "Port for SMC rest API"
+            },
+            "type": "int"
+        },
+        "smcContactTls": {
+            "defaultValue": true,
+            "metadata": {
+                "description": "TLS usage for self creation"
+            },
+            "type": "bool"
+        },
+        "sshKey": {
+            "metadata": {
+                "description": "NGFW engine username public ssh key"
+            },
+            "type": "string"
+        },
+        "useZones": {
+            "defaultValue": true,
+            "metadata": {
+                "description": "Use availability zones. This needs to be supported by the selected location. if the availability zones is not used, then Availability Set will be used"
+            },
+            "type": "bool"
+        },
+        "vnet": {
+            "metadata": {
+                "description": "vnet object generated by Virtual Network Combo"
+            },
+            "type": "object"
+        },
+        "zone1": {
+            "defaultValue": ["1"],
+            "metadata": {
+                "description": "selected availability zone for first NGFW instance"
+            },
+            "type": "array"
+        },
+        "zone2": {
+            "defaultValue": ["2"],
+            "metadata": {
+                "description": "selected availability zone for second NGFW instance"
+            },
+            "type": "array"
+        }
+    },
+    "resources": [
+        {
+            "condition": "[not(parameters('useZones'))]",
+            "type": "Microsoft.Compute/availabilitySets",
+            "apiVersion": "2017-03-30",
+            "name": "[variables('availabilitySetName')]",
+            "location": "[parameters('location')]",
+            "properties": {
+                "platformFaultDomainCount": 2,
+                "platformUpdateDomainCount": 2
+            },
+            "sku": {
+                "name": "Aligned"
+            }
+        },
+        {
+            "apiVersion": "2019-09-01",
+            "copy": {
+                "count": "[length(parameters('vnet').addressPrefixes)]",
+                "name": "routecopy"
+            },
+            "dependsOn": [
+                "[concat(parameters('resourcePrefix'),'rtbl')]"
+            ],
+            "location": "[parameters('location')]",
+            "name": "[concat(concat(parameters('resourcePrefix'),'rtbl'),'/','route-between-subnets-',copyIndex())]",
+            "properties": {
+                "addressPrefix": "[parameters('vnet').addressPrefixes[copyIndex()]]",
+                "nextHopIpAddress": "[parameters('vnet').subnets.security.startAddress]",
+                "nextHopType": "VirtualAppliance"
+            },
+            "type": "Microsoft.Network/routeTables/routes"
+        },
+        {
+            "apiVersion": "2019-09-01",
+            "location": "[parameters('location')]",
+            "name": "[concat(parameters('resourcePrefix'),'rtbl')]",
+            "properties": {
+                "routes": [
+                    {
+                        "name": "route-to-internet",
+                        "properties": {
+                            "addressPrefix": "0.0.0.0/0",
+                            "nextHopIpAddress": "[parameters('vnet').subnets.security.startAddress]",
+                            "nextHopType": "VirtualAppliance"
+                        }
+                    },
+                    {
+                        "name": "route-to-security-subnet",
+                        "properties": {
+                            "addressPrefix": "[parameters('vnet').subnets.security.addressPrefix]",
+                            "nextHopType": "VnetLocal"
+                        }
+                    }
+                ]
+            },
+            "type": "Microsoft.Network/routeTables"
+        },
+        {
+            "apiVersion": "2019-09-01",
+            "location": "[parameters('location')]",
+            "name": "[concat(parameters('resourcePrefix'),'nsg-for-ngfw')]",
+            "properties": {
+                "securityRules": [
+                    {
+                        "name": "outboundAllowAll",
+                        "properties": {
+                            "access": "Allow",
+                            "description": "Allow any traffic, useful to emit traffic from securityNetwork to other subnet with public src ips",
+                            "destinationAddressPrefix": "*",
+                            "destinationPortRange": "*",
+                            "direction": "Outbound",
+                            "priority": 300,
+                            "protocol": "*",
+                            "sourceAddressPrefix": "*",
+                            "sourcePortRange": "*"
+                        }
+                    },
+                    {
+                        "name": "InboundAllowAll",
+                        "properties": {
+                            "access": "Allow",
+                            "description": "Allow any traffic",
+                            "destinationAddressPrefix": "*",
+                            "destinationPortRange": "*",
+                            "direction": "Inbound",
+                            "priority": 200,
+                            "protocol": "*",
+                            "sourceAddressPrefix": "*",
+                            "sourcePortRange": "*"
+                        }
+                    }
+                ]
+            },
+            "type": "Microsoft.Network/networkSecurityGroups"
+        },
+        {
+            "apiVersion": "2019-09-01",
+            "condition": "[equals(parameters('vnet').newOrExisting,'new')]",
+            "dependsOn": [
+                "[concat(parameters('resourcePrefix'),'rtbl')]",
+                "[concat(parameters('resourcePrefix'),'nsg-for-ngfw')]"
+            ],
+            "location": "[parameters('location')]",
+            "name": "[parameters('vnet').name]",
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": "[parameters('vnet').addressPrefixes]"
+                },
+                "subnets": [
+                    {
+                        "name": "[parameters('vnet').subnets.security.name]",
+                        "properties": {
+                            "addressPrefix": "[parameters('vnet').subnets.security.addressPrefix]",
+                            "networkSecurityGroup": {
+                                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', concat(parameters('resourcePrefix'),'nsg-for-ngfw'))]"
+                            }
+                        }
+                    },
+                    {
+                        "name": "[parameters('vnet').subnets.front.name]",
+                        "properties": {
+                            "addressPrefix": "[parameters('vnet').subnets.front.addressPrefix]",
+                            "routeTable": {
+                                "id": "[resourceId('Microsoft.Network/routeTables', concat(parameters('resourcePrefix'),'rtbl'))]"
+                            }
+                        }
+                    },
+                    {
+                        "name": "[parameters('vnet').subnets.back.name]",
+                        "properties": {
+                            "addressPrefix": "[parameters('vnet').subnets.back.addressPrefix]",
+                            "routeTable": {
+                                "id": "[resourceId('Microsoft.Network/routeTables', concat(parameters('resourcePrefix'),'rtbl'))]"
+                            }
+                        }
+                    }
+                ]
+            },
+            "type": "Microsoft.Network/virtualnetworks"
+        },
+        {
+            "apiVersion": "2019-09-01",
+            "dependsOn": [
+                "[parameters('vnet').name]"
+            ],
+            "location": "[parameters('location')]",
+            "name": "[variables('external-loadbalancer-name')]",
+            "properties": {
+                "LoadBalancingRules": [
+                    {
+                        "name": "dummyRule",
+                        "properties": {
+                            "FrontendIPConfiguration": {
+                                "id": "[resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', variables('external-loadbalancer-name'), 'externallb_frontipconfig')]"
+                            },
+                            "backendAddressPool": {
+                                "id": "[resourceId('Microsoft.Network/loadBalancers/backendAddressPools', variables('external-loadbalancer-name'), 'externallb_backend')]"
+                            },
+                            "backendPort": 65499,
+                            "enableFloatingIP": false,
+                            "frontendPort": 65499,
+                            "idleTimeoutInMinutes": 15,
+                            "probe": {
+                                "id": "[resourceId('Microsoft.Network/loadBalancers/probes', variables('external-loadbalancer-name'), 'externalprobe')]"
+                            },
+                            "protocol": "TCP"
+                        }
+                    }
+                ],
+                "backendAddressPools": [
+                    {
+                        "name": "externallb_backend",
+                        "properties": {}
+                    }
+                ],
+                "frontendIPConfigurations": [
+                    {
+                        "name": "externallb_frontipconfig",
+                        "properties": {
+                            "publicIPAddress": {
+                                "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))]"
+                            }
+                        }
+                    }
+                ],
+                "probes": [
+                    {
+                        "name": "externalprobe",
+                        "properties": {
+                            "intervalInSeconds": 5,
+                            "numberOfProbes": 2,
+                            "port": "[variables('CustomData')['probe-port']]",
+                            "protocol": "Http",
+                            "requestPath": "/"
+                        }
+                    }
+                ],
+                "inboundNatRules": [
+                    {
+                        "name": "inboundnat.0",
+                        "properties": {
+                            "frontendIPConfiguration": {
+                                "id": "[resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', variables('external-loadbalancer-name'), 'externallb_frontipconfig')]"
+                            },
+                            "frontendPort": 50000,
+                            "backendPort": 22,
+                            "enableFloatingIP": false,
+                            "idleTimeoutInMinutes": 4,
+                            "protocol": "Tcp",
+                            "enableTcpReset": false
+                        }
+                    },
+                    {
+                        "name": "inboundnat.1",
+                        "properties": {
+                            "frontendIPConfiguration": {
+                                "id": "[resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', variables('external-loadbalancer-name'), 'externallb_frontipconfig')]"
+                            },
+                            "frontendPort": 50001,
+                            "backendPort": 22,
+                            "enableFloatingIP": false,
+                            "idleTimeoutInMinutes": 4,
+                            "protocol": "Tcp",
+                            "enableTcpReset": false
+                        }
+                    }
+                ]
+            },
+            "sku": {
+                "name": "Standard"
+            },
+            "type": "Microsoft.Network/loadBalancers"
+        },
+        {
+            "apiVersion": "2019-08-01",
+            "condition": "[and(equals(parameters('vnet').newOrExisting,'existing'),parameters('injectToExistingVnet'))]",
+            "dependsOn": [
+                "[concat(parameters('resourcePrefix'),'rtbl')]",
+                "[concat(parameters('resourcePrefix'),'nsg-for-ngfw')]"
+            ],
+            "name": "[take(concat(deployment().name,'-vnet-insertion'),64)]",
+            "properties": {
+                "mode": "Incremental",
+                "parameters": {},
+                "template": {
+                    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+                    "contentVersion": "1.0.0.0",
+                    "outputs": {},
+                    "parameters": {},
+                    "resources": [
+                        {
+                            "apiVersion": "2019-09-01",
+                            "location": "[parameters('location')]",
+                            "name": "[concat(parameters('vnet').name,'/',parameters('vnet').subnets.front.name)]",
+                            "properties": {
+                                "addressPrefix": "[parameters('vnet').subnets.front.addressPrefix]",
+                                "routeTable": {
+                                    "id": "[resourceId('Microsoft.Network/routeTables', concat(parameters('resourcePrefix'),'rtbl'))]"
+                                }
+                            },
+                            "type": "Microsoft.Network/virtualnetworks/subnets"
+                        },
+                        {
+                            "apiVersion": "2019-09-01",
+                            "location": "[parameters('location')]",
+                            "name": "[concat(parameters('vnet').name,'/',parameters('vnet').subnets.back.name)]",
+                            "properties": {
+                                "addressPrefix": "[parameters('vnet').subnets.back.addressPrefix]",
+                                "routeTable": {
+                                    "id": "[resourceId('Microsoft.Network/routeTables', concat(parameters('resourcePrefix'),'rtbl'))]"
+                                }
+                            },
+                            "type": "Microsoft.Network/virtualnetworks/subnets"
+                        },
+                        {
+                            "apiVersion": "2019-09-01",
+                            "location": "[parameters('location')]",
+                            "name": "[concat(parameters('vnet').name,'/',parameters('vnet').subnets.security.name)]",
+                            "properties": {
+                                "addressPrefix": "[parameters('vnet').subnets.security.addressPrefix]",
+                                "networkSecurityGroup": {
+                                    "id": "[resourceId('Microsoft.Network/networkSecurityGroups', concat(parameters('resourcePrefix'),'nsg-for-ngfw'))]"
+                                }
+                            },
+                            "type": "Microsoft.Network/virtualnetworks/subnets"
+                        }
+                    ],
+                    "variables": {}
+                }
+            },
+            "resourceGroup": "[parameters('vnet').resourceGroup]",
+            "type": "Microsoft.Resources/deployments"
+        },
+        {
+            "apiVersion": "2019-09-01",
+            "dependsOn": [
+                "[parameters('vnet').name]"
+            ],
+            "location": "[parameters('location')]",
+            "name": "[variables('internal-loadbalancer-name')]",
+            "properties": {
+                "LoadBalancingRules": [
+                    {
+                        "name": "AllTraffic",
+                        "properties": {
+                            "FrontendIPConfiguration": {
+                                "id": "[resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', variables('internal-loadbalancer-name'), 'internallb_frontipconfig')]"
+                            },
+                            "backendAddressPool": {
+                                "id": "[resourceId('Microsoft.Network/loadBalancers/backendAddressPools', variables('internal-loadbalancer-name'), 'internallb_backend')]"
+                            },
+                            "backendPort": 0,
+                            "enableFloatingIP": true,
+                            "frontendPort": 0,
+                            "idleTimeoutInMinutes": 15,
+                            "probe": {
+                                "id": "[resourceId('Microsoft.Network/loadBalancers/probes', variables('internal-loadbalancer-name'), 'internalprobe')]"
+                            },
+                            "protocol": "all"
+                        }
+                    }
+                ],
+                "backendAddressPools": [
+                    {
+                        "name": "internallb_backend",
+                        "properties": {}
+                    }
+                ],
+                "frontendIPConfigurations": [
+                    {
+                        "name": "internallb_frontipconfig",
+                        "properties": {
+                            "privateIPAddress": "[parameters('vnet').subnets.security.startAddress]",
+                            "privateIPAllocationMethod": "Static",
+                            "subnet": {
+                                "id": "[resourceId(parameters('vnet').resourceGroup,'Microsoft.Network/virtualnetworks/subnets',parameters('vnet').name,parameters('vnet').subnets.security.name)]"
+                            }
+                        }
+                    }
+                ],
+                "probes": [
+                    {
+                        "name": "internalprobe",
+                        "properties": {
+                            "intervalInSeconds": 5,
+                            "numberOfProbes": 2,
+                            "port": "[variables('CustomData')['probe-port']]",
+                            "protocol": "Http",
+                            "requestPath": "/"
+                        }
+                    }
+                ]
+            },
+            "sku": {
+                "name": "Standard"
+            },
+            "type": "Microsoft.Network/loadBalancers"
+        },
+        {
+            "apiVersion": "2019-09-01",
+            "location": "[parameters('location')]",
+            "name": "[variables('publicIpName')]",
+            "properties": {
+                "PublicIPAllocationMethod": "Static",
+                "dnsSettings": {
+                    "domainNameLabel": "[variables('domainNameLabel')]"
+                }
+            },
+            "sku": {
+                "name": "Standard"
+            },
+            "type": "Microsoft.Network/publicIPAddresses"
+        },
+        {
+            "apiVersion": "2019-04-01",
+            "kind": "Storage",
+            "location": "[parameters('location')]",
+            "name": "[variables('storageName')]",
+            "properties": {},
+            "sku": {
+                "name": "Standard_LRS"
+            },
+            "type": "Microsoft.Storage/storageAccounts"
+        },
+        {
+            "apiVersion": "2019-08-01",
+            "name": "pid-88218bd4-761a-4725-a907-8214a51dfd12",
+            "properties": {
+                "mode": "Incremental",
+                "parameters": {},
+                "template": {
+                    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+                    "contentVersion": "1.0.0.0",
+                    "outputs": {},
+                    "parameters": {},
+                    "resources": [],
+                    "variables": {}
+                }
+            },
+            "type": "Microsoft.Resources/deployments"
+        },
+        {
+            "apiVersion": "2019-07-01",
+            "dependsOn": [
+                "[variables('vm1NetwrokInterfaceName')]"
+            ],
+            "location": "[parameters('location')]",
+            "name": "[variables('ngfwVmName')]",
+            "plan": {
+                "name": "[parameters('sku')]",
+                "product": "forcepoint-ngfw",
+                "publisher": "forcepoint-llc"
+            },
+            "properties": {
+                "diagnosticsProfile": {
+                    "bootDiagnostics": {
+                        "enabled": true,
+                        "storageUri": "[reference(variables('storageName')).primaryEndpoints.blob]"
+                    }
+                },
+                "hardwareProfile": {
+                    "vmSize": "[parameters('engineVMSize')]"
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('vm1NetwrokInterfaceName'))]",
+                            "properties": {
+                                "primary": true
+                            }
+                        }
+                    ]
+                },
+                "osProfile": {
+                    "adminUsername": "[parameters('engineUsername')]",
+                    "computerName": "[concat(parameters('resourcePrefix'),variables('instanceKey'), '-engine1')]",
+                    "customData": "[if(equals(parameters('deployment_model'),'manual'),parameters('engineCfg'),base64(string(union(variables('CustomData'),json(concat('{\"contact-address\":\"',reference(variables('vmPublicIpName')).dnsSettings.fqdn,'\"}'))))))]",
+                    "linuxConfiguration": {
+                        "disablePasswordAuthentication": true,
+                        "ssh": {
+                            "publicKeys": [
+                                {
+                                    "keyData": "[parameters('sshKey')]",
+                                    "path": "[concat('/home/', parameters('engineUsername'), '/.ssh/authorized_keys')]"
+                                }
+                            ]
+                        }
+                    }
+                },
+                "storageProfile": {
+                    "imageReference": {
+                        "offer": "forcepoint-ngfw",
+                        "publisher": "forcepoint-llc",
+                        "sku": "[parameters('sku')]",
+                        "version": "[parameters('imageVersion')]"
+                    },
+                    "osDisk": {
+                        "caching": "ReadWrite",
+                        "createOption": "FromImage"
+                    }
+                },
+                "availabilitySet": "[if(not(parameters('useZones')),variables('availabilitySet'), json('null'))]"
+
+            },
+            "type": "Microsoft.Compute/virtualMachines",
+            "zones": "[if(parameters('useZones'),parameters('zone1'),json('null'))]"
+        },
+        {
+            "apiVersion": "2019-07-01",
+            "dependsOn": [
+                "[parameters('vnet').name]",
+                "[variables('vmPublicIpName')]",
+                "[variables('internal-loadbalancer-name')]",
+                "[variables('external-loadbalancer-name')]",
+                "[resourceId('Microsoft.Network/loadBalancers/inboundNatRules', variables('external-loadbalancer-name'), 'inboundnat.0')]"
+            ],
+            "location": "[parameters('location')]",
+            "name": "[variables('vm1NetwrokInterfaceName')]",
+            "properties": {
+                "enableIPForwarding": true,
+                "ipConfigurations": [
+                    {
+                        "name": "nic-ip",
+                        "properties": {
+                            "privateIPAddress": "[parameters('vnet').subnets.security.vm1PrivateAddress]",
+                            "privateIPAllocationMethod": "Static",
+                            "publicIpAddress": {
+                                "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('vmPublicIpName'))]"
+                            },
+                            "loadBalancerBackendAddressPools": [
+                                {
+                                    "id": "[resourceId('Microsoft.Network/loadBalancers/backendAddressPools', variables('internal-loadbalancer-name'), 'internallb_backend')]"
+                                },
+                                {
+                                    "id": "[resourceId('Microsoft.Network/loadBalancers/backendAddressPools', variables('external-loadbalancer-name'), 'externallb_backend')]"
+                                }
+                            ],
+                            "loadBalancerInboundNatRules": [
+                                {
+                                    "id": "[resourceId('Microsoft.Network/loadBalancers/inboundNatRules', variables('external-loadbalancer-name'), 'inboundnat.0')]"
+                                }
+                            ],
+                            "subnet": {
+                                "id": "[resourceId(parameters('vnet').resourceGroup,'Microsoft.Network/virtualnetworks/subnets',parameters('vnet').name,parameters('vnet').subnets.security.name)]"
+                            }
+                        }
+                    }
+                ],
+                "networkSecurityGroup": {
+                    "id": "[resourceId('Microsoft.Network/networkSecurityGroups', concat(parameters('resourcePrefix'),'nsg-for-ngfw'))]"
+                }
+            },
+            "type": "Microsoft.Network/networkInterfaces"
+        },
+        {
+            "apiVersion": "2019-09-01",
+            "location": "[parameters('location')]",
+            "name": "[variables('vmPublicIpName')]",
+            "properties": {
+                "PublicIPAllocationMethod": "Static",
+                "dnsSettings": {
+                    "domainNameLabel": "[variables('vmDomainNameLabel')]"
+                }
+            },
+            "sku": {
+                "name": "Standard"
+            },
+            "type": "Microsoft.Network/publicIPAddresses",
+            "zones": "[if(parameters('useZones'),parameters('zone1'),json('null'))]"
+        },
+        {
+            "apiVersion": "2019-09-01",
+            "location": "[parameters('location')]",
+            "name": "[variables('vm2PublicIpName')]",
+            "properties": {
+                "PublicIPAllocationMethod": "Static",
+                "dnsSettings": {
+                    "domainNameLabel": "[variables('vm2DomainNameLabel')]"
+                }
+            },
+            "sku": {
+                "name": "Standard"
+            },
+            "type": "Microsoft.Network/publicIPAddresses",
+            "zones": "[if(parameters('useZones'),parameters('zone2'),json('null'))]"
+        },
+        {
+            "apiVersion": "2019-07-01",
+            "dependsOn": [
+                "[variables('vm2NetwrokInterfaceName')]"
+            ],
+            "location": "[parameters('location')]",
+            "name": "[variables('ngfwVm2Name')]",
+            "plan": {
+                "name": "[parameters('sku')]",
+                "product": "forcepoint-ngfw",
+                "publisher": "forcepoint-llc"
+            },
+            "properties": {
+                "diagnosticsProfile": {
+                    "bootDiagnostics": {
+                        "enabled": true,
+                        "storageUri": "[reference(variables('storageName')).primaryEndpoints.blob]"
+                    }
+                },
+                "hardwareProfile": {
+                    "vmSize": "[parameters('engineVMSize')]"
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('vm2NetwrokInterfaceName'))]",
+                            "properties": {
+                                "primary": true
+                            }
+                        }
+                    ]
+                },
+                "osProfile": {
+                    "adminUsername": "[parameters('engineUsername')]",
+                    "computerName": "[concat(parameters('resourcePrefix'),variables('instanceKey'), '-engine2')]",
+                    "customData": "[if(equals(parameters('deployment_model'),'manual'),parameters('engineCfg'),base64(string(union(variables('CustomData'),json(concat('{\"contact-address\":\"',reference(variables('vm2PublicIpName')).dnsSettings.fqdn,'\"}'))))))]",
+                    "linuxConfiguration": {
+                        "disablePasswordAuthentication": true,
+                        "ssh": {
+                            "publicKeys": [
+                                {
+                                    "keyData": "[parameters('sshKey')]",
+                                    "path": "[concat('/home/', parameters('engineUsername'), '/.ssh/authorized_keys')]"
+                                }
+                            ]
+                        }
+                    }
+                },
+                "storageProfile": {
+                    "imageReference": {
+                        "offer": "forcepoint-ngfw",
+                        "publisher": "forcepoint-llc",
+                        "sku": "[parameters('sku')]",
+                        "version": "[parameters('imageVersion')]"
+                    },
+                    "osDisk": {
+                        "caching": "ReadWrite",
+                        "createOption": "FromImage"
+                    }
+                },
+                "availabilitySet": "[if(not(parameters('useZones')),variables('availabilitySet'), json('null'))]"
+            },
+            "type": "Microsoft.Compute/virtualMachines",
+            "zones": "[if(parameters('useZones'),parameters('zone2'),json('null'))]"
+        },
+        {
+            "apiVersion": "2019-07-01",
+            "dependsOn": [
+                "[parameters('vnet').name]",
+                "[variables('vm2PublicIpName')]",
+                "[variables('internal-loadbalancer-name')]",
+                "[variables('external-loadbalancer-name')]",
+                "[resourceId('Microsoft.Network/loadBalancers/inboundNatRules', variables('external-loadbalancer-name'), 'inboundnat.1')]"
+            ],
+            "location": "[parameters('location')]",
+            "name": "[variables('vm2NetwrokInterfaceName')]",
+            "properties": {
+                "enableIPForwarding": true,
+                "ipConfigurations": [
+                    {
+                        "name": "nic-ip-2",
+                        "properties": {
+                            "privateIPAddress": "[parameters('vnet').subnets.security.vm2PrivateAddress]",
+                            "privateIPAllocationMethod": "Static",
+                            "publicIpAddress": {
+                                "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('vm2PublicIpName'))]"
+                            },
+                            "loadBalancerBackendAddressPools": [
+                                {
+                                    "id": "[resourceId('Microsoft.Network/loadBalancers/backendAddressPools', variables('internal-loadbalancer-name'), 'internallb_backend')]"
+                                },
+                                {
+                                    "id": "[resourceId('Microsoft.Network/loadBalancers/backendAddressPools', variables('external-loadbalancer-name'), 'externallb_backend')]"
+                                }
+                            ],
+                            "loadBalancerInboundNatRules": [
+                                {
+                                    "id": "[resourceId('Microsoft.Network/loadBalancers/inboundNatRules', variables('external-loadbalancer-name'), 'inboundnat.1')]"
+                                }
+                            ],
+                            "subnet": {
+                                "id": "[resourceId(parameters('vnet').resourceGroup,'Microsoft.Network/virtualnetworks/subnets',parameters('vnet').name,parameters('vnet').subnets.security.name)]"
+                            }
+                        }
+                    }
+                ],
+                "networkSecurityGroup": {
+                    "id": "[resourceId('Microsoft.Network/networkSecurityGroups', concat(parameters('resourcePrefix'),'nsg-for-ngfw'))]"
+                }
+            },
+            "type": "Microsoft.Network/networkInterfaces"
+        },
+        {
+            "type": "Microsoft.Network/loadBalancers/inboundNatRules",
+            "apiVersion": "2020-05-01",
+            "name": "[concat(parameters('resourcePrefix'),'externallb', '/inboundnat.0')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/loadBalancers', variables('external-loadbalancer-name'))]"
+            ],
+            "properties": {
+                "frontendIPConfiguration": {
+                    "id": "[resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', variables('external-loadbalancer-name'), 'externallb_frontipconfig')]"
+                },
+                "frontendPort": 50000,
+                "backendPort": 22,
+                "enableFloatingIP": false,
+                "idleTimeoutInMinutes": 4,
+                "protocol": "Tcp",
+                "enableTcpReset": false
+            }
+        },
+        {
+            "type": "Microsoft.Network/loadBalancers/inboundNatRules",
+            "apiVersion": "2020-05-01",
+            "name": "[concat(parameters('resourcePrefix'),'externallb', '/inboundnat.1')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/loadBalancers', variables('external-loadbalancer-name'))]"
+            ],
+            "properties": {
+                "frontendIPConfiguration": {
+                    "id": "[resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', variables('external-loadbalancer-name'), 'externallb_frontipconfig')]"
+                },
+                "frontendPort": 50001,
+                "backendPort": 22,
+                "enableFloatingIP": false,
+                "idleTimeoutInMinutes": 4,
+                "protocol": "Tcp",
+                "enableTcpReset": false
+            }
+        }
+    ]
+}
